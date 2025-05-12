@@ -1,11 +1,13 @@
+import os
+import json
+import chromadb
+from chromadb import PersistentClient
+from chromadb.errors import NotFoundError
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any
 import redis
-import json
-import os
-import chromadb
 import google.generativeai as genai
 from dotenv import load_dotenv
 import logging
@@ -31,7 +33,7 @@ app = FastAPI()
 # ——— CORS (allow your frontend origin) ———
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"], 
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,9 +47,13 @@ redis_client = redis.from_url(redis_url, decode_responses=True)
 # ——— ChromaDB Init ———
 PERSIST_DIR = r"C:\news-chatbot\backend\data\processed\chroma_db"
 try:
-    chroma_client = chromadb.PersistentClient(path=PERSIST_DIR)
-    collection = chroma_client.get_collection(name="news_passages")
-    logger.debug(f"Loaded collection 'news_passages' with {collection.count()} documents")
+    chroma_client = PersistentClient(path=PERSIST_DIR)
+    try:
+        collection = chroma_client.get_collection(name="news_passages")
+        logger.debug(f"Loaded collection 'news_passages' with {collection.count()} documents")
+    except NotFoundError:
+        collection = chroma_client.create_collection(name="news_passages")
+        logger.info("Created new ChromaDB collection 'news_passages'")
 except Exception as e:
     logger.error(f"Error initializing ChromaDB: {e}")
     raise
@@ -94,7 +100,7 @@ def generate_llm_response(context: str, user_message: str) -> str:
 @app.post("/chat", response_model=MessageResponse)
 async def chat(request: MessageRequest):
     session_id = request.session_id
-    user_msg   = request.message
+    user_msg = request.message
     logger.info(f"[CHAT] session={session_id} message={user_msg}")
 
     # Load session history
@@ -143,7 +149,6 @@ async def delete_session(session_id: str):
         logger.error(f"[DELETE] Unexpected error: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-
 # ——— Debug Raw Endpoint ———
 @app.post("/debug_raw", response_model=Dict[str, Any])
 async def debug_raw(request: MessageRequest):
@@ -151,7 +156,7 @@ async def debug_raw(request: MessageRequest):
     try:
         results = collection.query(query_texts=[user_msg], n_results=5)
         docs = results["documents"][0]
-        prompt = f"Context:\n{docs}\n\nUser: {user_msg}\nBot:"
+        prompt = f"Context:\n{docs}\n\nUser: {user_msg}\nBot:"        
         response = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt)
         return { "raw": str(response), "attrs": dir(response) }
     except Exception as e:
