@@ -38,7 +38,11 @@ app.add_middleware(
 )
 
 # ——— Redis Client ———
-redis_client = redis.StrictRedis(host='localhost', port=6379, db=0, decode_responses=True)
+redis_url = os.getenv("REDIS_URL")
+if not redis_url:
+    raise ValueError("Missing REDIS_URL in environment variables")
+
+redis_client = redis.from_url(redis_url, decode_responses=True)
 
 # ——— ChromaDB Init ———
 PERSIST_DIR = r"C:\news-chatbot\backend\data\processed\chroma_db"
