@@ -3,3 +3,9 @@ __pycache__/
 .env
 *.db
 data/
+.git/
+.vscode/
+.idea/
+*.log
+*.swp
+*.bak
