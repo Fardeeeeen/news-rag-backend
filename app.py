@@ -38,10 +38,8 @@ app.add_middleware(
 )
 
 # ——— Redis Client ———
-redis_url = os.getenv("REDIS_URL")
-if not redis_url:
-    raise ValueError("Missing REDIS_URL in environment variables")
-
+redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+logger.info(f"Using Redis URL: {redis_url}")
 redis_client = redis.from_url(redis_url, decode_responses=True)
 
 # ——— ChromaDB Init ———
@@ -135,17 +133,16 @@ async def chat(request: MessageRequest):
 # ——— Delete Session Endpoint ———
 @app.delete("/session/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_session(session_id: str):
-    """
-    Clears the chat history for the given session.
-    Returns 204 No Content.
-    """
     try:
         redis_client.delete(session_id)
         logger.info(f"[DELETE] Cleared session {session_id}")
+    except redis.ConnectionError as e:
+        logger.error(f"[DELETE] Redis connection error: {e}")
+        raise HTTPException(status_code=500, detail="Could not connect to Redis")
     except Exception as e:
-        logger.error(f"[DELETE] Redis error: {e}")
-        raise HTTPException(status_code=500, detail="Could not clear session")
-    return
+        logger.error(f"[DELETE] Unexpected error: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 
 # ——— Debug Raw Endpoint ———
 @app.post("/debug_raw", response_model=Dict[str, Any])
