@@ -30,11 +30,16 @@ if not GOOGLE_API_KEY:
 # ——— FastAPI App ———
 app = FastAPI()
 
+# ——— Root Health Check ———
+@app.get("/")
+def read_root():
+    return {"status": "ok", "message": "News-RAG backend is running!"}
+
 # ——— CORS (allow your frontend origin) ———
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:3000", 
+        "http://localhost:3000",
         "https://news-rag-frontend.onrender.com",
     ],
     allow_credentials=True,
@@ -53,7 +58,7 @@ try:
     chroma_client = PersistentClient(path=PERSIST_DIR)
     try:
         collection = chroma_client.get_collection(name="news_passages")
-        logger.debug(f"Loaded collection 'news_passages' with {collection.count()} documents")
+        logger.debug(f"Loaded collection 'news_passages' with {collection.count()} docs")
     except NotFoundError:
         collection = chroma_client.create_collection(name="news_passages")
         logger.info("Created new ChromaDB collection 'news_passages'")
@@ -65,7 +70,7 @@ except Exception as e:
 genai.configure(api_key=GOOGLE_API_KEY)
 logger.debug("Configured Gemini with API key")
 for model in genai.list_models():
-    logger.debug(f"Model: {model.name}")
+    logger.debug(f"Model available: {model.name}")
 
 # ——— Pydantic Models ———
 class MessageRequest(BaseModel):
@@ -76,28 +81,32 @@ class MessageResponse(BaseModel):
     response: str
     session_history: List[Dict[str, str]]
 
-# ——— Helper: Generate LLM Response ———
+# ——— Helper: Generate LLM Response via Chat API ———
 def generate_llm_response(context: str, user_message: str) -> str:
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        prompt = f"Context:\n{context}\n\nUser: {user_message}\nBot:"
-        response = model.generate_content(prompt)
-
-        # Check for block feedback
-        fb = getattr(response, "prompt_feedback", None)
-        if fb and fb.block_reason:
-            return f"(Blocked by Gemini: {fb.block_reason})"
-
-        # Concatenate all text parts from all candidates
-        full_response = ""
-        for candidate in getattr(response, "candidates", []):
-            parts = getattr(candidate.content, "parts", []) or []
-            for part in parts:
-                full_response += getattr(part, "text", "")
-
-        return full_response.strip() or "(No response)"
+        # Use Gemini chat model with system prompt
+        chat = genai.ChatModel(name="gemini-1.5-chat")
+        messages = [
+            {
+                "author": "system",
+                "content": (
+                    "You are a helpful assistant that answers user questions directly. "
+                    "Do not list response-template options; just provide concise, accurate answers."
+                ),
+            },
+            {
+                "author": "user",
+                "content": (
+                    f"Here is context from relevant news passages:\n{context}\n\n"
+                    f"Now answer the user's question: \"{user_message}\""
+                ),
+            },
+        ]
+        resp = chat.generate(messages=messages)
+        # Extract assistant's reply
+        return resp.generations[0].message.content.strip()
     except Exception as e:
-        logger.error(f"Gemini error: {e}")
+        logger.error(f"Gemini chat error: {e}")
         return f"(LLM error: {e})"
 
 # ——— Chat Endpoint ———
@@ -107,7 +116,7 @@ async def chat(request: MessageRequest):
     user_msg = request.message
     logger.info(f"[CHAT] session={session_id} message={user_msg}")
 
-    # Load session history
+    # Retrieve session history from Redis
     try:
         raw = redis_client.get(session_id)
         history = json.loads(raw) if raw else []
@@ -115,7 +124,7 @@ async def chat(request: MessageRequest):
         logger.error(f"[CHAT] Redis error: {e}")
         history = []
 
-    # Retrieve top-k passages
+    # Vector retrieval from ChromaDB
     try:
         results = collection.query(query_texts=[user_msg], n_results=5)
         docs = results["documents"][0]
@@ -123,15 +132,13 @@ async def chat(request: MessageRequest):
         logger.error(f"[CHAT] ChromaDB error: {e}")
         raise HTTPException(status_code=500, detail="Vector DB error")
 
-    # Build context
+    # Build prompt context
     convo = "\n".join(docs) + "\n" + "\n".join(
         f"User: {h['user']}\nBot: {h['bot']}" for h in history
     )
 
-    # Generate reply
+    # Generate and record reply
     reply = generate_llm_response(convo, user_msg)
-
-    # Update history
     history.append({"user": user_msg, "bot": reply})
     try:
         redis_client.set(session_id, json.dumps(history))
@@ -146,12 +153,9 @@ async def delete_session(session_id: str):
     try:
         redis_client.delete(session_id)
         logger.info(f"[DELETE] Cleared session {session_id}")
-    except redis.ConnectionError as e:
-        logger.error(f"[DELETE] Redis connection error: {e}")
-        raise HTTPException(status_code=500, detail="Could not connect to Redis")
     except Exception as e:
-        logger.error(f"[DELETE] Unexpected error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        logger.error(f"[DELETE] Redis error: {e}")
+        raise HTTPException(status_code=500, detail="Could not clear session")
 
 # ——— Debug Raw Endpoint ———
 @app.post("/debug_raw", response_model=Dict[str, Any])
@@ -161,8 +165,13 @@ async def debug_raw(request: MessageRequest):
         results = collection.query(query_texts=[user_msg], n_results=5)
         docs = results["documents"][0]
         prompt = f"Context:\n{docs}\n\nUser: {user_msg}\nBot:"
-        response = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt)
-        return {"raw": str(response), "attrs": dir(response)}
+        # Use chat model for debug as well
+        chat = genai.ChatModel(name="gemini-1.5-chat")
+        resp = chat.generate(messages=[
+            {"author":"system","content":"You are debugging."},
+            {"author":"user","content":prompt}
+        ])
+        return {"raw": str(resp), "attrs": dir(resp)}
     except Exception as e:
         logger.error(f"[DEBUG_RAW] error: {e}")
         raise HTTPException(status_code=500, detail="Debug error")
