@@ -1,0 +1,5 @@
+http://feeds.bbci.co.uk/news/rss.xml
+https://www.reuters.com/tools/rss
+https://www.theguardian.com/world/rss
+http://rss.cnn.com/rss/edition.rss
+https://www.aljazeera.com/xml/rss/all.xml
