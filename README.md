@@ -33,8 +33,8 @@ RSS feed URLs in backend/data/raw/news_rss.txt
 
 Installation
 1. Clone the Repository
-git clone https://github.com/your-username/news-chatbot.git
-cd news-chatbot
+git clone https://github.com/Fardeeeeen/news-rag-backend
+cd news-rag-backend
 
 2. Set Up Environment Variables
 Create a .env file in the root directory with the following:
