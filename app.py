@@ -35,7 +35,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000", 
-        "https://news-rag-frontend.onrender.com",  
+        "https://news-rag-frontend.onrender.com",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -83,18 +83,19 @@ def generate_llm_response(context: str, user_message: str) -> str:
         prompt = f"Context:\n{context}\n\nUser: {user_message}\nBot:"
         response = model.generate_content(prompt)
 
-        # Check blocking
+        # Check for block feedback
         fb = getattr(response, "prompt_feedback", None)
         if fb and fb.block_reason:
             return f"(Blocked by Gemini: {fb.block_reason})"
 
-        # Extract text
+        # Concatenate all text parts from all candidates
+        full_response = ""
         for candidate in getattr(response, "candidates", []):
-            parts = getattr(candidate.content, "parts", None)
-            if parts:
-                return parts[0].text.strip()
-        # Fallback
-        return getattr(response, "text", "(No response)") or "(No response)"
+            parts = getattr(candidate.content, "parts", []) or []
+            for part in parts:
+                full_response += getattr(part, "text", "")
+
+        return full_response.strip() or "(No response)"
     except Exception as e:
         logger.error(f"Gemini error: {e}")
         return f"(LLM error: {e})"
@@ -159,9 +160,9 @@ async def debug_raw(request: MessageRequest):
     try:
         results = collection.query(query_texts=[user_msg], n_results=5)
         docs = results["documents"][0]
-        prompt = f"Context:\n{docs}\n\nUser: {user_msg}\nBot:"        
+        prompt = f"Context:\n{docs}\n\nUser: {user_msg}\nBot:"
         response = genai.GenerativeModel('gemini-1.5-flash').generate_content(prompt)
-        return { "raw": str(response), "attrs": dir(response) }
+        return {"raw": str(response), "attrs": dir(response)}
     except Exception as e:
         logger.error(f"[DEBUG_RAW] error: {e}")
         raise HTTPException(status_code=500, detail="Debug error")
